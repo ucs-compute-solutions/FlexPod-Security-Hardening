@@ -1,0 +1,432 @@
+---
+# Configure event notification and logging for the cluster
+- name: Configure event notification for the cluster
+  netapp.ontap.na_ontap_rest_cli:
+    command: 'event/config'
+    verb: 'PATCH'
+    body: {'mail-from': '{{mail_from}}','mail-server': '{{mail_server}}','proxy-url': '{{proxy_url | default(omit)}}','proxy-user': '{{proxy_user | default(omit)}}'}
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  tags:
+    - ontap_event_config
+
+# Create new administrator accounts to receive multi-admin verification (MAV)
+- name: Create new users to receive multi-admin verification
+  netapp.ontap.na_ontap_user:
+    state: present
+    name: "{{item.username}}"
+    set_password: "{{item.password}}"
+    role_name: admin
+    applications: ssh,http,ontapi
+    authentication_method: password
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_items:
+    - "{{user_accounts}}"
+  tags:
+    - ontap_create_users
+
+# Create the MAV approvers list
+- name: Create the multi-admin verification approvers list
+  ansible.builtin.set_fact:
+    approvers_list: "{{ approvers_list | default([]) + [item.name] }}"
+  with_items:
+    - "{{ mav_specs.approvers }}"
+  tags:
+    - ontap_mav_approval_group
+
+# Create the MAV approvers email list
+- name: Create the multi-admin verification email list
+  ansible.builtin.set_fact:
+    email_list: "{{ email_list | default([]) + [item.email] }}"
+  with_items:
+    - "{{ mav_specs.approvers }}"
+  tags:
+    - ontap_mav_approval_group
+
+# Create the MAV approval group
+- name: Create the multi-admin verification approval group
+  netapp.ontap.na_ontap_restit:
+    api: '/security/multi-admin-verify/approval-groups'
+    method: 'POST'
+    body:
+      name: "{{ mav_specs.approval_group }}"
+      approvers: "{{ approvers_list }}"
+      email: "{{ email_list }}"
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  tags:
+    - ontap_mav_approval_group
+
+# Create MAV rules
+- name: Create multi-admin verification rules
+  netapp.ontap.na_ontap_restit:
+    api: '/security/multi-admin-verify/rules'
+    method: 'POST'
+    body:
+      operation: "{{item.operation}}"
+      query: "{{item.query | default(omit)}}"
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_items:
+    - "{{ mav_specs.mav_rules }}"
+  tags:
+    - ontap_mav_rules
+
+# Enable multi-admin verification (MAV)
+- name: Enable multi-admin verification
+  netapp.ontap.na_ontap_restit:
+    api: '/security/multi-admin-verify'
+    method: 'PATCH'
+    body:
+      enabled: true
+      approval_groups: "{{ mav_specs.approval_group | split }}"
+      required_approvers: "{{mav_specs.required_approvers}}"
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  tags:
+    - ontap_enable_mav
+
+# Modify the timeout setting for ONTAP CLI login session
+- name: Modify the timeout setting for ONTAP CLI login session
+  netapp.ontap.na_ontap_cli_timeout:
+    state: present
+    timeout: "{{cli_timeout}}"
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  tags:
+    - ontap_login_session_timeout
+
+# Modify the defaults for the maximum active ONTAP CLI sessions
+- name: Modify the defaults for the maximum active CLI sessions
+  netapp.ontap.na_ontap_rest_cli:
+    command: 'security/session/limit'
+    verb: 'PATCH'
+    params: {'interface': 'cli','category': '*'}
+    body: {'max-active-limit': '{{max_active_limit_cli}}'}
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  tags:
+    - ontap_max_active_cli_session
+
+# Create a read-only user to monitor the health of the storage cluster using ssh application with password authentication
+- name: Create a read-only user for monitoring the health of the ONTAP Cluster
+  netapp.ontap.na_ontap_user:
+    state: present
+    use_rest: always
+    name: "{{item.name}}"
+    applications: ssh
+    authentication_method: password
+    role_name: readonly
+    set_password: "{{item.password}}"
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_items:
+    - "{{clusteruser_specs}}"
+  tags:
+    - ontap_monitor_cluster_health
+
+# Enable IPsec on the ONTAP Cluster
+- name: Enable IPsec on the ONTAP Cluster
+  netapp.ontap.na_ontap_security_ipsec_config:
+    state: present
+    enabled: true
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  tags:
+    - ontap_enable_ipsec
+
+# Configure ONTAP to send important Event Management System (EMS) event notifications (utilizing system-defined event filters)
+- name: Create an event notification destination to send notifications to a syslog server (using system-defined event filters)
+  netapp.ontap.na_ontap_ems_destination:
+    state: present
+    name: "{{item.name}}"
+    type: syslog
+    destination: "{{item.destination}}"
+    filters: "{{system_defined_event_filters}}"
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_items:
+    - "{{ems_destination_system_defined_filter}}"
+  when: use_system_defined_event_filters == true
+  tags:
+    - ontap_configure_ems_destination_systemdefined
+
+# Configure ONTAP Event Management System (EMS) filter
+- name: Create user-defined new event filter with rules
+  netapp.ontap.na_ontap_ems_filter:
+    state: present
+    name: "{{item.0.name}}"
+    rules:
+      - index: "{{item.1.position}}"
+        type: "{{item.1.type}}"
+        message_criteria:
+          severities: "{{item.1.severity}}"
+          name_pattern: "{{item.1.message_name}}"
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_subelements:
+    - "{{user_defined_event_filter}}"
+    - rules
+  when: configure_user_defined_event_filter == true
+  tags:
+    - ontap_configure_ems_filter
+    - ontap_configure_ems_destination_userdefined
+
+# Create the user-defined event filters list variable for EMS destination task
+- name: Create the user-defined event filters list for EMS destination task
+  ansible.builtin.set_fact:
+    ud_event_filter_list: "{{ ud_event_filter_list | default([]) + [item.name] }}"
+  with_items:
+    - "{{user_defined_event_filter}}"
+  when: configure_user_defined_event_filter == true
+  tags:
+    - ontap_configure_ems_destination_userdefined
+
+# Configure ONTAP to send important Event Management System (EMS) event notifications (utilizing user-defined event filters)
+- name: Create an event notification destination to send notifications to a syslog server (using user-defined event filters)
+  netapp.ontap.na_ontap_ems_destination:
+    state: present
+    name: "{{item.name}}"
+    type: syslog
+    destination: "{{item.destination}}"
+    filters: "{{ud_event_filter_list}}"
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_items:
+    - "{{ems_destination_user_defined_filter}}"
+  when: configure_user_defined_event_filter == true
+  tags:
+    - ontap_configure_ems_destination_userdefined
+
+# Set up an automated ONTAP cluster configuration backup upload destination with username and password
+- name: Set up an automated ONTAP Cluster configuration backup upload destination
+  netapp.ontap.na_ontap_restit:
+    api: '/support/configuration-backup'
+    method: 'PATCH'
+    body:
+      url: "{{item.destination_url}}"
+      username: "{{item.username}}"
+      password: "{{item.password}}"
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_items:
+    - "{{backup_settings_specs}}"
+  tags:
+    - ontap_config_backup_settings
+
+# Configure ONTAP for Multi-Tenant Infrastructure
+# Create QoS Policy group for SVM
+- name: create QoS policy group for SVM
+  netapp.ontap.na_ontap_qos_policy_group:
+    state: present
+    name: "{{item.qos_policy.name}}"
+    vserver: "{{item.svm_name}}"
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    use_rest: always
+    validate_certs: false
+    fixed_qos_options:
+      max_throughput_iops: "{{ item.qos_policy.max_throughput_iops }}"
+      max_throughput_mbps: "{{ item.qos_policy.max_throughput_mbps }}"
+      min_throughput_iops: "{{ item.qos_policy.min_throughput_iops }}"
+      min_throughput_mbps: "{{ item.qos_policy.min_throughput_mbps }}"
+      capacity_shared: True
+  with_items:
+    - "{{ tenants }}"
+  tags:
+    - ontap_create_qos_policy
+
+# Apply QoS Policy group to Tenant SVMs
+- name: Apply QoS Policy groups to SVMs
+  netapp.ontap.na_ontap_rest_cli:
+    command: "vserver"
+    verb: 'PATCH'
+    params: {"vserver": "{{item.svm_name}}"}
+    body: {"qos_policy_group": "{{item.qos_policy.name}}"}
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_items: "{{ tenants }}"
+  tags:
+    - ontap_svm_apply_qospolicy
+
+# Create Adaptive QoS policy group
+- name: Create adaptive qos policy group
+  netapp.ontap.na_ontap_qos_policy_group:
+    state: present
+    name: "{{item.qos_adaptive_policy.name}}"
+    vserver: "{{ item.svm_name}}"
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    use_rest: always
+    validate_certs: false
+    adaptive_qos_options:
+      absolute_min_iops: "{{item.qos_adaptive_policy.absolute_min_iops}}"
+      expected_iops: "{{item.qos_adaptive_policy.expected_iops}}"
+      peak_iops: "{{item.qos_adaptive_policy.peak_iops}}"
+      peak_iops_allocation: "{{ item.qos_adaptive_policy.peak_iops_allocation}}"
+  with_items:
+    - "{{ tenants }}"
+  tags:
+    - ontap_vol_create_adaptive_qos_policy
+
+# Apply Adaptive QoS policy group on data volume
+- name: Apply adaptive qos policy group on Data Volume
+  netapp.ontap.na_ontap_volume:
+    state: present
+    name: "{{ item.1.name }}"
+    vserver: "{{ item.0.svm_name }}"
+    hostname: "{{ inventory_hostname }}"
+    username: "{{ username }}"
+    password: "{{ password }}"
+    qos_adaptive_policy_group: "{{ item.1.qos_adaptive_policy_group }}"
+    use_rest: always
+    https: true
+    validate_certs: false
+  with_subelements:
+    - "{{ tenants }}"
+    - data_volumes
+  tags:
+    - ontap_apply_adaptive_qos_policy
+
+# Auti/ autonomous ransomware protection on data volumes.
+- name: Enable anti/autonomous-ransomware protection on data volumes
+  netapp.ontap.na_ontap_rest_cli:
+    command: "volume"
+    verb: 'PATCH'
+    params: {"vserver": "{{ item.0.svm_name}}", "volume": "{{item.1.name}}"}
+    body: {'anti_ransomware_state': "{{item.1.anti_ransomware_state}}"}
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    use_rest: always
+    https: true
+    validate_certs: false
+  with_subelements:
+    - "{{ tenants}}"
+    - data_volumes
+  tags:
+    - ontap_anti_ransomware_enable
+
+# Create fpolicy events to block known file extensions      
+- name: Create FPolicy Event
+  netapp.ontap.na_ontap_fpolicy_event:
+    state: present
+    vserver: "{{ item.0.svm_name }}"
+    name: "{{item.1.name}}"
+    file_operations: "{{item.1.file_operations}}"
+    protocol: "{{ item.1.protocol }}"
+    username: "{{ username }}"
+    password: "{{ password }}"
+    hostname: "{{ inventory_hostname }}"
+    use_rest: always
+    https: true
+    validate_certs: false      
+  with_subelements:
+    - "{{ tenants}}"
+    - fpolicy_attributes.events
+  tags:
+    - ontap_fpolicy_event_create
+
+# Configure a native Fpolicy
+- name: Create a fpolicy to block known file extensions
+  netapp.ontap.na_ontap_fpolicy_policy:
+    state: present
+    vserver: "{{ item.svm_name }}"
+    name: "{{ item.fpolicy_attributes.policy.name }}"
+    events: "{{ item.fpolicy_attributes.policy.events }}"
+    engine: "{{ item.fpolicy_attributes.policy.engine }}"
+    is_mandatory: True 
+    allow_privileged_access: False
+    is_passthrough_read_enabled: False 
+    username: "{{ username }}"
+    password: "{{ password }}"
+    hostname: "{{ inventory_hostname }}"
+    use_rest: always
+    https: true
+    validate_certs: false
+  with_items:
+    - "{{tenants}}"
+  tags:
+    - ontap_fpolicy_policy_create
+
+# Configure fpolicy scope
+- name: Create fpolicy scope 
+  netapp.ontap.na_ontap_fpolicy_scope:
+    state: present
+    vserver: "{{ item.svm_name }}"
+    name: "{{ item.fpolicy_attributes.policy.name }}"
+    volumes_to_include: "{{ item.fpolicy_attributes.scope.volumes_to_include }}"
+    file_extensions_to_include: "{{ item.fpolicy_attributes.scope.file_extensions_to_include }}"
+    username: "{{ username }}"
+    password: "{{ password }}"
+    hostname: "{{ inventory_hostname }}"
+    use_rest: always
+    https: true
+    validate_certs: false
+  with_items:
+    - "{{tenants}}"
+  tags:
+    - ontap_fpolicy_scope_create
+
+# Enable fpolicy policy created      
+- name: Enable fPolicy policy
+  netapp.ontap.na_ontap_fpolicy_status:
+    state: present
+    vserver: "{{ item.svm_name }}"
+    policy_name: "{{ item.fpolicy_attributes.policy.name }}"
+    sequence_number: "{{ item.fpolicy_attributes.policy.sequence_number }}"
+    username: "{{ username }}"
+    password: "{{ password }}"
+    hostname: "{{ inventory_hostname }}"
+    https: true
+    validate_certs: false
+    use_rest: always
+  with_items:
+    - "{{tenants}}"
+  tags:
+    - ontap_fpolicy_enable

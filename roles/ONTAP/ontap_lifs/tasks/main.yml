@@ -1,0 +1,228 @@
+---
+# Create LIFs for NFS access for all tenants
+- name: Create LIF(s) for NFS access
+  netapp.ontap.na_ontap_interface:
+    state: present
+    vserver: "{{item.0.svm_name}}"
+    ipspace: "{{item.0.name}}"
+    service_policy: default-data-files
+    home_node: "{{item.1.home_node}}"
+    home_port: "{{ifgrp_name}}-{{item.0.broadcast_domains[0]['NFS']['vlanid']}}"
+    address: "{{item.1.address}}"
+    netmask: "{{item.1.netmask}}"
+    interface_name: "{{item.1.name}}"
+    admin_status: up
+    failover_policy: broadcast-domain-wide
+    is_auto_revert: true
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_subelements:
+    - "{{tenants}}"
+    - nfs_lifs
+  when:
+    - "('nfs' in item.0.allowed_protocols)"
+  tags:
+    - ontap_nfs_lifs
+
+# Create Tenant Storage Virtual Machine Management LIF
+- name: Create LIF for Tenant SVM Management
+  netapp.ontap.na_ontap_interface:
+    state: present
+    vserver: "{{item.svm_name}}"
+    ipspace: "{{item.name}}"
+    service_policy: default-management
+    home_node: "{{item.svm_mgmt_lif.home_node}}"
+    home_port: "{{ifgrp_name}}-{{item.broadcast_domains[0]['IB-MGMT'].vlanid}}"
+    address: "{{item.svm_mgmt_lif.address}}"
+    netmask: "{{item.svm_mgmt_lif.netmask}}"
+    interface_name: "{{item.svm_mgmt_lif.lif_name}}"
+    admin_status: up
+    failover_policy: broadcast-domain-wide
+    is_auto_revert: true
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_items:
+    - "{{tenants}}"
+  tags:
+    - ontap_svm_mgmt_lif
+
+# Create a default route in Tenant SVM
+- name: Create a default route in Tenant SVM
+  netapp.ontap.na_ontap_net_routes:
+    state: present
+    vserver: "{{item.svm_name}}"
+    destination: "0.0.0.0/0"
+    gateway: "{{item.svm_mgmt_lif.gateway}}"
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_items:
+    - "{{tenants}}"
+  tags:
+    - ontap_svm_default_route
+
+# Getting the iSCSI storage VLANs list
+- name: Get the iSCSI storage VLANs list
+  ansible.builtin.set_fact:
+    iscsi_vlans_list: []
+  tags:
+    - ontap_iscsi_lifs
+
+# Getting the iSCSI storage VLANs list
+- name: Get the iSCSI storage VLANs list
+  ansible.builtin.set_fact:
+    iscsi_vlans_list: "{{ iscsi_vlans_list + [ {'vserver': item.0.svm_name, 'vlan_id': item.1.vlanid, 'vlan_fabric': item.1.fabric, 'ipspace': item.0.name}] }}"
+  with_nested:
+    - "{{ tenants }}"
+    - "{{ tenants | map(attribute='broadcast_domains') | flatten | map(attribute='ISCSI') | flatten}}"
+  when:
+    - ('iscsi' in item.0.allowed_protocols) and ((item.0.broadcast_domains | flatten | map(attribute='ISCSI')| flatten) is defined) and (item.0.broadcast_domains | flatten | map(attribute='ISCSI'))[0][0].name != none
+    - item.1 in (item.0.broadcast_domains | flatten | map(attribute='ISCSI') | flatten)
+  tags:
+    - ontap_iscsi_lifs
+
+- name: Get the iSCSI storage VLANs list
+  ansible.builtin.debug: var=iscsi_vlans_list
+  tags:
+    - ontap_iscsi_lifs
+    
+# Create iSCSI LIFs on all nodes across the cluster
+- name: Create iSCSI LIFs on nodes
+  netapp.ontap.na_ontap_interface:
+    state: present
+    vserver: "{{item.0.svm_name}}"
+    ipspace: "{{item.1.ipspace}}"
+    service_policy: default-data-iscsi
+    home_node: "{{item.2.home_node}}"
+    home_port: "{{ifgrp_name}}-{{item.1.vlan_id}}"
+    address: "{{item.2.address}}"
+    netmask: "{{item.2.netmask}}"
+    interface_name: "{{item.2.name}}"
+    admin_status: up
+    failover_policy: disabled
+    is_auto_revert: false
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_nested:
+    - "{{ tenants }}"
+    - "{{ iscsi_vlans_list }}"
+    - "{{ tenants | map(attribute='iscsi_lifs') | flatten }}"
+  when:
+    - ('iscsi' in item.0.allowed_protocols) and item.1 is defined
+    - item.1.vserver == item.0.svm_name
+    - item.2.fabric == item.1.vlan_fabric
+  tags:
+    - ontap_iscsi_lifs
+
+# Create FCP LIF(s) on Nodes
+- name: Create FCP LIF(s) on Nodes
+  netapp.ontap.na_ontap_interface:
+    state: present
+    vserver: "{{item.0.svm_name}}"
+    protocols: fcp
+    home_node: "{{item.2.node_name}}"
+    home_port: "{{item.1.home_port}}"
+    interface_name: "{{item.1.name}}"
+    admin_status: up
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_nested:
+    - "{{ tenants }}"
+    - "{{ ha_pairs | map(attribute='node_specs') | flatten }}"
+    - "{{ tenants | map(attribute='fcp_lifs') | flatten}})"
+  when: "('fcp' in item.0.allowed_protocols)"
+  tags:
+    - ontap_fcp_lifs
+
+# Create NVMe FC LIF(s) on Nodes
+- name: Create NVMe FC LIF(s) on Nodes
+  netapp.ontap.na_ontap_interface:
+    state: present
+    vserver: "{{item.2.svm_name}}"
+    protocols: fc-nvme
+    home_node: "{{item.0.node_name}}"
+    home_port: "{{item.1.home_port}}"
+    interface_name: "{{item.1.name}}"
+    admin_status: up
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_nested:
+    - "{{ tenants }}"
+    - "{{ ha_pairs | map(attribute='node_specs') | flatten }}"
+    - "{{ tenants | map(attribute='fc-nvme_lifs') | flatten}})"
+  when: "('fcp' in item.0.allowed_protocols) and ('nvme' in item.0.allowed_protocols)"
+  tags:
+    - ontap_fc_nvme_lifs
+
+# Getting the NVME/TCP storage VLANs list
+- name: Get the NVME/TCP storage VLANs list
+  ansible.builtin.set_fact:
+    nvmetcp_vlans_list: []
+  tags:
+    - ontap_nvme_tcp_lifs
+
+# Getting the NVME/TCP storage VLANs list
+- name: Get the NVME/TCP storage VLANs list
+  ansible.builtin.set_fact:
+    nvmetcp_vlans_list: "{{ nvmetcp_vlans_list|default([]) + [ {'vserver': item.0.svm_name, 'vlan_id': item.1.vlanid, 'vlan_fabric': item.1.fabric, 'ipspace': item.0.name}] }}"
+  with_nested:
+    - "{{ tenants }}"
+    - "{{ tenants | map(attribute='broadcast_domains') | flatten | map(attribute='NVME-TCP') | flatten}}"
+  when:
+    - ('nvme' in item.0.allowed_protocols) and ((item.0.broadcast_domains | flatten | map(attribute='NVME-TCP')| flatten) is defined) and (item.0.broadcast_domains | flatten | map(attribute='NVME-TCP'))[0][0].name != none
+    - item.1 in (item.0.broadcast_domains | flatten | map(attribute='NVME-TCP') | flatten)
+  tags:
+    - ontap_nvme_tcp_lifs
+
+- name: Get the NVME/TCP storage VLANs list
+  ansible.builtin.debug: var=nvmetcp_vlans_list
+  tags:
+    - ontap_nvme_tcp_lifs
+
+# Create NVMe/TCP LIFs on all nodes across the cluster
+- name: Create NVMe-TCP LIFs on nodes
+  netapp.ontap.na_ontap_interface:
+    state: present
+    vserver: "{{item.0.svm_name}}"
+    ipspace: "{{item.1.ipspace}}"
+    service_policy: default-data-iscsi
+    home_node: "{{item.2.home_node}}"
+    home_port: "{{ifgrp_name}}-{{item.1.vlan_id}}"
+    address: "{{item.2.address}}"
+    netmask: "{{item.2.netmask}}"
+    interface_name: "{{item.2.name}}"
+    admin_status: up
+    failover_policy: disabled
+    is_auto_revert: false
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_nested:
+    - "{{ tenants }}"
+    - "{{ nvmetcp_vlans_list }}"
+    - "{{ tenants | map(attribute='nvme_tcp_lifs') | flatten }}"
+  when:
+    - ('nvme' in item.0.allowed_protocols) and item.1 is not undefined
+    - item.1.vserver == item.0.svm_name
+    - item.2.fabric == item.1.vlan_fabric
+  tags:
+    - ontap_nvme_tcp_lifs

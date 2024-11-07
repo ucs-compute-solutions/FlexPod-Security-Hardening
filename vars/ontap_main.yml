@@ -1,0 +1,268 @@
+---
+# Role variables as per NetApp's prescriptive guidance
+# This can be overridden by a var-file.yml at the command line
+# User's input variables
+
+##################################################################################################################################################
+# Cluster specific variables
+
+# Cluster specific configurations are done as part of Base FlexPod setup.
+##################################################################################################################################################
+ha_pairs:
+  - ha_no: 1
+    node_specs:
+    - node_name: fpsa-g0613-a400-01
+      data_aggregates:
+        - {aggr_name: aggr1_fpsa_g0613_01}
+    - node_name: fpsa-g0613-a400-02
+      data_aggregates:
+        - {aggr_name: aggr1_fpsa_g0613_02}
+
+##################################################################################################################################################
+#SVM specific variables
+##################################################################################################################################################
+tenants:
+  - name: "Tenant1"  # ipspace creation
+    svm_name: "Tenant1-SVM"
+    broadcast_domains: # do not change the order. If it is not applicable, make the values of the keys as none.
+    - IB-MGMT: { name: Tenant1-SVM-MGMT, vlanid: 300 }
+      NFS: { name: Tenant1-NFS, vlanid: 301 }
+      ISCSI:
+        - {name: none, vlanid: none, fabric: none }
+      NVME-TCP: 
+        - {name: Tenant1-NVMETCPA, vlanid: 500, fabric: A}
+        - {name: Tenant1-NVMETCPB, vlanid: 501, fabric: B}
+    # If you want to use the QoS Adaptive Policy on data Volume, the parent SVM must have Qos-policy set to none.
+    qos_adaptive_policy: {name: tenant1-qos-adaptive, expected_iops: 5000, peak_iops: 10000, peak_iops_allocation: allocated_space, absolute_min_iops: 1000}
+    # If using Qos-policy for the vserver (SVM), you cannot assign QoS Adaptive Policy to its data volume. Choose between the two clearly.
+    qos_policy: {name: tenant1-qos, max_throughput_mbps: 10000, max_throughput_iops: 200 , min_throughput_iops: 0, min_throughput_mbps: 0}
+    allowed_protocols:  #provide the values in lower case only, supported options for this solution are nfs, fcp, iscsi, nvme
+      - nfs             #For FC-NVMe config, use fcp and nvme
+        # - fcp             #For NVMe/TCP config, use nvme and iscsi
+      - nvme
+        #- iscsi
+    client_match: 192.168.50.0/24
+    data_protocol: nfs
+    swap_volumes:
+      - {name: infra_swap, size: 200, residing_aggr: aggr1_fpsa_g0613_01}
+    nvme_datastores:
+      - {name: nvme_datastore, size: 1024, residing_aggr: aggr1_fpsa_g0613_01} #Use the data aggregates with disk_type as SSD-NVM
+    vcls_datastores:  #vCLS datastores to be used by the vSphere environment to host vSphere Cluster Services (vCLS)
+      - {name: vCLS, size: 100, residing_aggr: aggr1_fpsa_g0613_01}
+#    - {name: vcls_datastore2, size: 100, residing_aggr: AA02_A800_02_NVME_SSD_1}
+    boot_volumes:
+      - {name: esxi_boot, size: 1024, residing_aggr: aggr1_fpsa_g0613_01}
+    boot_luns_iscsi: {size: 128, residing_vol: esxi_boot}   #ESXi host names will be used for NetApp Boot LUNs and igroup names. These vars are placed under group_vars/all.yml file
+    boot_luns_fcp: {size: 128, residing_vol: esxi_boot}
+    nvme_subsystem: nvme_infra_hosts
+    nvme_namespaces:  #Mention the namespaces that you want to create and map to the subsystem
+      - {name: nvme_namespace_01, size: 500, residing_vol: nvme_datastore}  #Use NVMe datastore as residing volume here. Enter size values in gb
+    os_type: vmware
+    dns_server_svm:
+      - "{{ dns_servers[0].ip_address }}"
+      - "{{ dns_servers[1].ip_address }}"
+    dns_domain_svm: "{{ dns_domain_name }}"
+    vsadmin_password: NetApp!23
+    svm_login_banner: Tenant1-SVM is reserved for authorized users
+    audit_log_volume_specs: {name: Tenant1_audit_log, size: 50, residing_aggr: aggr1_fpsa_g0613_01}
+    snapshot_policy_specs: # SnapShot policy to be set for data volume. to create a custom snapshot policy based on schedule and count, provide the details in this variable.
+      - {name: snap_policy_1, schedules: ['15min', 'hourly', 'weekly', 'daily', 'monthly'], count: [8, 6, 2, 2, 1]}
+    # snapshot_policy field takes value as custom or none or default.
+    # To use the custom snapshot policy created above, provide its name in the "snapshot_policy" field. If you wish to use the default policy, set the field to "default".
+    data_volumes:
+      - {name: Tenant1_vol_01, size: 500, residing_aggr: aggr1_fpsa_g0613_01, anti_ransomware_state: enabled, snapshot_policy: 'snap_policy_1', qos_adaptive_policy_group: tenant1-qos-adaptive}
+      - {name: Tenant1_vol_02, size: 500, residing_aggr: aggr1_fpsa_g0613_02, anti_ransomware_state: disabled, snapshot_policy: 'default', qos_adaptive_policy_group: tenant1-qos-adaptive}
+    svm_mgmt_lif: {lif_name: tenant1-svm-mgmt, address: 192.168.50.32, netmask: 255.255.255.0, gateway: 172.22.54.1, home_node: fpsa-g0613-a400-01}
+    nfs_lifs:
+      - {name: nfs-lif-01, address: 192.168.50.34, netmask: 255.255.255.0, home_node: fpsa-g0613-a400-01}
+      - {name: nfs-lif-02, address: 192.168.50.35, netmask: 255.255.255.0, home_node: fpsa-g0613-a400-02}
+    fcp_lifs:    #Fill out this value only if fcp will be mentioned under allowed_protocols in svm_specs
+      - {name: fcp-lif-01a, home_port: 2a, fabric: A}  #Do not change the fabric ID
+      - {name: fcp-lif-01b, home_port: 2b, fabric: B} #Do not change the fabric ID
+      - {name: fcp-lif-02a, home_port: 2a, fabric: A}  #Do not change the fabric ID
+      - {name: fcp-lif-02b, home_port: 2b, fabric: B}  #Do not change the fabric ID
+    fc-nvme_lifs:    #Fill out this value only if fcp and nvme will be mentioned under allowed_protocols in svm_specs
+      - {name: fc-nvme-lif-01a, home_port: 2a, fabric: A}  #Do not change the fabric ID
+      - {name: fc-nvme-lif-01b, home_port: 2b, fabric: B} #Do not change the fabric ID
+      - {name: fc-nvme-lif-02a, home_port: 2a, fabric: A}  #Do not change the fabric ID
+      - {name: fc-nvme-lif-02b, home_port: 2b, fabric: B}  #Do not change the fabric ID
+    iscsi_lifs:  #Fill out this value only if iscsi will be mentioned under allowed_protocols in svm_specs. Provide one iSCSI LIF per iSCSI VLAN
+      - {name: iscsi-lif-01a, address: 192.168.10.31, netmask: 255.255.255.0, fabric: A, home_node: fpsa-g0613-a400-01}  #Do not change the fabric ID
+      - {name: iscsi-lif-01b, address: 192.168.20.31, netmask: 255.255.255.0, fabric: B, home_node: fpsa-g0613-a400-01}  #Do not change the fabric ID
+      - {name: iscsi-lif-02a, address: 192.168.10.32, netmask: 255.255.255.0, fabric: A, home_node: fpsa-g0613-a400-02}  #Do not change the fabric ID
+      - {name: iscsi-lif-02b, address: 192.168.20.32, netmask: 255.255.255.0, fabric: B, home_node: fpsa-g0613-a400-02}  #Do not change the fabric ID
+    nvme_tcp_lifs:  #Fill out this value only if iscsi and nvme will be mentioned under allowed_protocols in svm_specs. Provide one NVMe/TCP LIF per NVMe/TCP VLAN
+      - {name: nvme-tcp-lif-01a, address: 192.168.30.31, netmask: 255.255.255.0, fabric: A, home_node: fpsa-g0613-a400-01}  #Do not change the fabric ID
+      - {name: nvme-tcp-lif-01b, address: 192.168.40.31, netmask: 255.255.255.0, fabric: B, home_node: fpsa-g0613-a400-01}  #Do not change the fabric ID
+      - {name: nvme-tcp-lif-02a, address: 192.168.30.32, netmask: 255.255.255.0, fabric: A, home_node: fpsa-g0613-a400-02}  #Do not change the fabric ID
+      - {name: nvme-tcp-lif-02b, address: 192.168.40.32, netmask: 255.255.255.0, fabric: B, home_node: fpsa-g0613-a400-02}  #Do not change the fabric ID
+    # if there is no QoS policy, specify qos_policy: none    
+    fpolicy_attributes:
+      events:
+        - {name: fpolicy_event_1, protocol: nfsv3, file_operations: [create,write,rename]}
+        - {name: fpolicy_event2, protocol: nfsv4, file_operations: [create,write,rename]}
+      policy: {name: blockext, events: [fpolicy_event_1, fpolicy_event2], engine: native, is_mandatory: true, allow_privileged_access: false, is_passthrough_read_enabled: false, sequence_number: 1}
+      scope: {volumes_to_include: [mp3,mp4,locked], file_extensions_to_include: '*'}
+  - name: "Tenant2"  # ipspace creation
+    svm_name: "Tenant2-SVM"
+    broadcast_domains: # do not change the order. If it is not applicable, make it empty dictionary.
+    - IB-MGMT: { name: Tenant2-SVM-MGMT, vlanid: 600}
+      NFS: { name: none, vlanid: none}
+      ISCSI:
+        - {name: Tenant2-ISCSIA, vlanid: 700, fabric: A}
+        - {name: Tenant2-ISCSIB, vlanid: 701, fabric: B}
+      NVME-TCP:
+        - {name: none, vlanid: none, fabric: none}
+    # if you want to use the QoS Adaptive Policy on data Volume, the parent SVM must have Qos-policy set to none.
+    # is using Qos-policy for the vserver (SVM), you cannot assign QoS Adaptive Policy to its data volume. Choose between the two clearly.
+    qos_adaptive_policy: {name: Tenant2-qos-adaptive, expected_iops: 5000, peak_iops: 10000, peak_iops_allocation: allocated_space, absolute_min_iops: 1000}
+    qos_policy: {name: Tenant2-qos, max_throughput_mbps: 10000, max_throughput_iops: 200 , min_throughput_iops: 0, min_throughput_mbps: 0}
+    allowed_protocols:  #provide the values in lower case only, supported options for this solution are nfs, fcp, iscsi, nvme
+      #- nfs             #For FC-NVMe config, use fcp and nvme
+        # - fcp             #For NVMe/TCP config, use nvme and iscsi
+        #- nvme
+      - iscsi
+    client_match: 192.168.40.0/24
+    data_protocol: nfs
+    swap_volumes:
+      - {name: infra_swap_1, size: 200, residing_aggr: aggr1_fpsa_g0613_01}
+    nvme_datastores:
+      - {name: nvme_datastore, size: 1024, residing_aggr: aggr1_fpsa_g0613_01} #Use the data aggregates with disk_type as SSD-NVM
+    vcls_datastores:  #vCLS datastores to be used by the vSphere environment to host vSphere Cluster Services (vCLS)
+      - {name: vCLS_2, size: 100, residing_aggr: aggr1_fpsa_g0613_01}
+#    - {name: vcls_datastore3, size: 100, residing_aggr: AA02_A800_02_NVME_SSD_1}
+    boot_volumes:
+      - {name: esxi_boot_1, size: 1024, residing_aggr: aggr1_fpsa_g0613_01}
+    boot_luns_iscsi: {size: 128, residing_vol: esxi_boot_1}   #ESXi host names will be used for NetApp Boot LUNs and igroup names. These vars are placed under group_vars/all.yml file
+    boot_luns_fcp: {size: 128, residing_vol: esxi_boot_1}
+    nvme_subsystem: nvme_infra_hosts
+    nvme_namespaces:  #Mention the namespaces that you want to create and map to the subsystem
+      - {name: nvme_namespace_01, size: 500, residing_vol: nvme_datastore}  #Use NVMe datastore as residing volume here. Enter size values in gb
+    os_type: vmware
+    dns_server_svm:
+      - "{{ dns_servers[0].ip_address }}"
+      - "{{ dns_servers[1].ip_address }}"
+    dns_domain_svm: "{{ dns_domain_name }}"
+    vsadmin_password: NetApp!23
+    svm_login_banner: Tenant2-SVM is reserved for authorized users
+    audit_log_volume_specs: {name: Tenant2_audit_log, size: 50, residing_aggr: aggr1_fpsa_g0613_01}
+    snapshot_policy_specs: # SnapShot policy to be set for data volume. to create a custom snapshot policy based on schedule and count, provide the details in this variable.
+      - {name: snap_policy_2, schedules: ['15min', 'hourly', 'weekly', 'daily', 'monthly'], count: [8, 6, 2, 2, 1]}
+    # snapshot_policy field takes value as custom or none or default.
+    # To use the custom snapshot policy created above, provide its name in the "snapshot_policy" field. If you wish to use the default policy, set the field to "default".
+    data_volumes:
+      - {name: Tenant2_vol_01, size: 500, residing_aggr: aggr1_fpsa_g0613_01, anti_ransomware_state: enabled, snapshot_policy: 'snap_policy_2', qos_adaptive_policy_group: Tenant2-qos-adaptive}
+      - {name: Tenant2_vol_02, size: 500, residing_aggr: aggr1_fpsa_g0613_02, anti_ransomware_state: disabled, snapshot_policy: 'default', qos_adaptive_policy_group: Tenant2-qos-adaptive}
+    svm_mgmt_lif: {lif_name: tenant2-svm-mgmt, address: 192.168.50.32, netmask: 255.255.255.0, gateway: 172.22.54.1, home_node: fpsa-g0613-a400-01}
+    nfs_lifs:
+      - {name: nfs-lif-01, address: 192.168.50.34, netmask: 255.255.255.0, home_node: fpsa-g0613-a400-01}
+      - {name: nfs-lif-02, address: 192.168.50.35, netmask: 255.255.255.0, home_node: fpsa-g0613-a400-02}
+    fcp_lifs:    #Fill out this value only if fcp will be mentioned under allowed_protocols in svm_specs
+      - {name: fcp-lif-01a, home_port: 2a, fabric: A}  #Do not change the fabric ID
+      - {name: fcp-lif-01b, home_port: 2b, fabric: B} #Do not change the fabric ID
+      - {name: fcp-lif-02a, home_port: 2a, fabric: A}  #Do not change the fabric ID
+      - {name: fcp-lif-02b, home_port: 2b, fabric: B}  #Do not change the fabric ID
+    fc-nvme_lifs:    #Fill out this value only if fcp and nvme will be mentioned under allowed_protocols in svm_specs
+      - {name: fc-nvme-lif-01a, home_port: 2a, fabric: A}  #Do not change the fabric ID
+      - {name: fc-nvme-lif-01b, home_port: 2b, fabric: B} #Do not change the fabric ID
+      - {name: fc-nvme-lif-02a, home_port: 2a, fabric: A}  #Do not change the fabric ID
+      - {name: fc-nvme-lif-02b, home_port: 2b, fabric: B}  #Do not change the fabric ID
+    iscsi_lifs:  #Fill out this value only if iscsi will be mentioned under allowed_protocols in svm_specs. Provide one iSCSI LIF per iSCSI VLAN
+      - {name: iscsi-lif-01a, address: 192.168.10.31, netmask: 255.255.255.0, fabric: A, home_node: fpsa-g0613-a400-01}  #Do not change the fabric ID
+      - {name: iscsi-lif-01b, address: 192.168.20.31, netmask: 255.255.255.0, fabric: B, home_node: fpsa-g0613-a400-01}  #Do not change the fabric ID
+      - {name: iscsi-lif-02a, address: 192.168.10.32, netmask: 255.255.255.0, fabric: A, home_node: fpsa-g0613-a400-02}  #Do not change the fabric ID
+      - {name: iscsi-lif-02b, address: 192.168.20.32, netmask: 255.255.255.0, fabric: B, home_node: fpsa-g0613-a400-02}  #Do not change the fabric ID
+    nvme_tcp_lifs:  #Fill out this value only if iscsi and nvme will be mentioned under allowed_protocols in svm_specs. Provide one NVMe/TCP LIF per NVMe/TCP VLAN
+      - {name: nvme-tcp-lif-01a, address: 192.168.30.31, netmask: 255.255.255.0, fabric: A, home_node: fpsa-g0613-a400-01}  #Do not change the fabric ID
+      - {name: nvme-tcp-lif-01b, address: 192.168.40.31, netmask: 255.255.255.0, fabric: B, home_node: fpsa-g0613-a400-01}  #Do not change the fabric ID
+      - {name: nvme-tcp-lif-02a, address: 192.168.30.32, netmask: 255.255.255.0, fabric: A, home_node: fpsa-g0613-a400-02}  #Do not change the fabric ID
+      - {name: nvme-tcp-lif-02b, address: 192.168.40.32, netmask: 255.255.255.0, fabric: B, home_node: fpsa-g0613-a400-02}  #Do not change the fabric ID
+    # if there is no QoS policy, specify qos_policy: none
+    fpolicy_attributes:
+      events:
+        - {name: fpolicy_event_3, protocol: nfsv3, file_operations: [create,write,rename]}
+        - {name: fpolicy_event_4, protocol: nfsv4, file_operations: [create,write,rename]}
+      policy: {name: blockext_1, events: [fpolicy_event_3, fpolicy_event_4], engine: native, is_mandatory: true, allow_privileged_access: false, is_passthrough_read_enabled: false, sequence_number: 1}
+      scope: {volumes_to_include: [mp3,mp4,locked], file_extensions_to_include: '*'}
+
+#################################################################################################################################################
+
+ifgrp_name: a0a
+ifgrp_mode: multimode_lacp
+
+#Job Schedule
+job_schedule:
+  - {job_name: 15min, job_minutes: 15}
+
+autosupport_message: "FlexPod ONTAP Storage Configuration with security best practices completed"
+##################################################################################################################################################
+# ONTAP Security Features related variables
+##################################################################################################################################################
+
+#New user accounts info
+user_accounts:
+  - {username: user_1, password: <password>}
+  - {username: user_2, password: <password>}
+  - {username: user_3, password: <password>}
+
+#Event Notification Email Settings for the Cluster
+mail_from: "kavyashm@netap"   #Email address from which email notifications will be sent
+mail_server: "10.61.176.251"   #Name or IP address of the SMTP server used by the cluster when sending email notification of events
+proxy_url:     #Optional: HTTP Proxy URL
+proxy_user:    #Optional: User Name for HTTP Proxy
+
+#Multi-admin Verification (MAV) related variables
+mav_specs:
+  approval_group: "test_mav_group"   #The MAV group name, up to 64 characters. Required to enable MAV functionality
+  approvers:                         #List of one or more approvers. Email addresses are notified when a request is created, approved, vetoed, or executed.
+    - {name: user_1, email: user1_email}
+    - {name: user_2, email: user2_email}
+  mav_rules:   #Rules to designate operations requiring approval
+    - {operation: "volume delete", query: }  #query is an optional parameter
+    - {operation: "volume snapshot delete", query: }
+  required_approvers: 1   #Number of approvers required to execute a protected operation. The default and minimum number is 1. Note: The required number of approvers must be less than the total number of unique approvers in the default approval groups.
+
+#ONTAP CLI login session timeout (in seconds)
+cli_timeout: 15
+
+#Maximum active ONTAP CLI session
+max_active_limit_cli: 4
+
+#Read-only user to monitor the health of the ONTAP Cluster (using ssh application with password authentication)
+clusteruser_specs: {name: fpmonitor, password: "{{password_1}}"}
+
+#System-defined event filter
+use_system_defined_event_filters: true
+
+system_defined_event_filters:   #Options are: default-trap-events, important-events, and no-info-debug-events
+  - important-events
+  - default-trap-events
+
+#EMS destination specifications (with system-defined event filters)
+ems_destination_system_defined_filter:   #Update this when "use_system_defined_event_filters" is set to true
+  - {name: ems1-syslog, destination: 192.168.50.62}   #Provide syslog server IP address or hostname
+  - {name: ems2-syslog, destination: 192.168.50.63}
+
+#User-defined event filter
+configure_user_defined_event_filter: true
+
+#User-defined event filter specifications
+user_defined_event_filter:   #Update this when "configure_user_defined_event_filter" is set to true
+  - name: user3-events   #Name of the EMS filter
+    rules:   #List of EMS filter rules. Specify the position of the rule in the event filter. Specify the type of the rule which determines whether to include or exclude the events that match this rule.
+    - {position: 1, type: include, message_name: "callhome.*", severity: "error,alert,emergency"}   #Specify the message name of the event to include or exclude from the filter. Specify the list of severity values to match against the events. Enter multiple severities separated by a comma. Valid values are: emergency, alert, error, notice, informational, and debug. To enter all severities, the wild card (*) can be used.
+    - {position: 2, type: include, message_name: "*", severity: "alert"}
+    - {position: 3, type: include, message_name: "*", severity: "emergency"}
+  - name: user4-events
+    rules:
+    - {position: 1, type: exclude, message_name: "wafl.*", severity: "error,alert"}
+    - {position: 2, type: include, message_name: "asup.*", severity: "error,notice"}
+    - {position: 3, type: include, message_name: "cf.*", severity: "error,alert"}
+
+#EMS destination specifications (with user-defined event filters)
+ems_destination_user_defined_filter:   #Update this when "configure_user_defined_event_filter" is set to true
+  - {name: user3-ems3-syslog, destination: 192.168.50.64}   #Provide syslog server IP address or hostname
+  - {name: user4-ems4-syslog, destination: 192.168.50.65}
+
+#ONTAP configuration backup settings specifications. Specify a remote URL (HTTP, HTTPS, FTP, FTPS, or TFTP) where the configuration backup files will be uploaded in addition to the default locations in the cluster. Provide the destination URL username and passowrd.
+backup_settings_specs: {destination_url: "ftp://192.168.50.95/home/admin/Backup/ONTAP", username: admin, password: "{{password_1}}"}

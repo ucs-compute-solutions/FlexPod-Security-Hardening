@@ -1,0 +1,335 @@
+---
+# Configure IPspaces for the Tenants
+- name: Configure IPspaces for the Tenants
+  netapp.ontap.na_ontap_ipspace:
+    state: present
+    name: '{{ item.name }}'
+    hostname: "{{ inventory_hostname }}"
+    username: "{{ username }}"
+    password: "{{ password }}"
+    use_rest: always
+    validate_certs: false
+    https: true
+  with_items:
+    - "{{tenants}}"
+  tags:
+    - ontap_ipspace_create
+
+# Create SVM Management Broadcast Domains
+- name: Create Tenant SVM Management Broadcast Domains
+  netapp.ontap.na_ontap_broadcast_domain:
+    state: present
+    broadcast_domain: "{{item.broadcast_domains[0]['IB-MGMT'].name}}"
+    ipspace: "{{ item.name}}"
+    mtu: 1500
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_items:
+    - "{{ tenants }}"
+  when: "'IB-MGMT' in item.broadcast_domains[0]"
+  tags:
+    - ontap_mgmt_broadcast_domain
+   
+# Create NFS broadcast domain ports with Jumbo frames
+- name: Create NFS broadcast domain ports with Jumbo frames
+  netapp.ontap.na_ontap_broadcast_domain:
+    state: present
+    broadcast_domain: "{{item.broadcast_domains[0]['NFS'].name}}"
+    ipspace: "{{ item.name}}"
+    mtu: 9000
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_items:
+    - "{{ tenants }}"
+  when:
+    - ('nfs' in item.allowed_protocols) and (item.broadcast_domains[0]['NFS'].name is not none)
+  tags:
+    - ontap_nfs_broadcast_domain
+
+# Create iSCSI broadcast domain ports with Jumbo frames
+- name: Create iSCSI broadcast domain ports with Jumbo frames
+  netapp.ontap.na_ontap_broadcast_domain:
+    state: present
+    broadcast_domain: "{{item.1.name }}"
+    ipspace: "{{ item.0.name }}"
+    mtu: 9000
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_nested:
+    - "{{ tenants }}"
+    - "{{ tenants | map(attribute='broadcast_domains')  | flatten | map(attribute='ISCSI') | flatten}}"
+  when:
+    - ('iscsi' in item.0.allowed_protocols) and (item.1 is defined)
+    - item.1 in (item.0.broadcast_domains | flatten | map(attribute='ISCSI') | flatten)
+  tags:
+    - ontap_iscsi_broadcast_domains
+
+# Create NVMe/TCP broadcast domain ports with Jumbo frames
+- name: Create NVMe/TCP broadcast domain ports with Jumbo frames
+  netapp.ontap.na_ontap_broadcast_domain:
+    state: present
+    broadcast_domain: "{{item.1.name}}"
+    ipspace: "{{ item.0.name}}"
+    mtu: 9000
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  when:
+    - ('nvme' in item.0.allowed_protocols) and (item.1 is defined)
+    - item.1 in (item.0.broadcast_domains | flatten | map(attribute='NVME-TCP') | flatten)
+  with_nested:
+    - "{{ tenants }}"
+    - "{{ tenants | map(attribute='broadcast_domains') | flatten | map(attribute='NVME-TCP') | flatten }}"      
+  tags:
+    - ontap_nvme_tcp_broadcast_domains
+
+# Create management vlan interface
+- name: Create the management vlan interface in the ipspace
+  netapp.ontap.na_ontap_net_vlan:
+    state: present
+    parent_interface: "{{ifgrp_name}}"
+    vlanid: "{{item.0.broadcast_domains[0]['IB-MGMT']['vlanid']}}"
+    node: "{{item.1.node_name }}"
+    ipspace: "{{item.0.name}}"
+    broadcast_domain: "{{item.0.broadcast_domains[0]['IB-MGMT']['name']}}"
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_nested:
+    - "{{ tenants }}"
+    - "{{ ha_pairs | map(attribute='node_specs') | flatten}}"
+  tags:
+    - ontap_vlan_interface
+
+# Get the IB-MGMT list for all tenant SVMs
+- name: Get the IB-MGMT vlan list
+  ansible.builtin.set_fact:
+    ibmgmt_vlan_list: "{{ ibmgmt_vlan_list | default([]) + [ item.broadcast_domains[0]['IB-MGMT']] }}"
+  with_items:
+    - "{{ tenants }}"
+  when: "'IB-MGMT' in item.broadcast_domains[0]"
+  tags:
+    - ontap_vlan_interface
+
+# Add the management vlan to the management broadcast domain
+- name: Adding management vlan to the management broadcast domain
+  netapp.ontap.na_ontap_ports:
+    state: present
+    names: "{{item.0.node_name}}:{{ifgrp_name}}-{{item.2.vlanid}}"
+    resource_type: "broadcast_domain"
+    resource_name: "{{item.2.name}}"
+    ipspace: "{{item.1.name}}"
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_nested:
+    - "{{ ha_pairs | map(attribute='node_specs') | flatten }}"
+    - "{{ tenants }}"
+    - "{{ ibmgmt_vlan_list }}"
+  when:
+    - item.2 == item.1.broadcast_domains[0]['IB-MGMT']
+  tags:
+    - ontap_vlan_interface
+
+# Create nfs vlan interface
+- name: Create NFS vlan interface in the ipspace
+  netapp.ontap.na_ontap_net_vlan:
+    state: present
+    parent_interface: "{{ifgrp_name}}"
+    vlanid: "{{ item.0.broadcast_domains[0]['NFS']['vlanid']}}"
+    node: "{{item.1.node_name }}"
+    ipspace: "{{item.0.name}}"
+    broadcast_domain: "{{ item.0.broadcast_domains[0]['NFS']['name']}}" 
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_nested:
+    - "{{ tenants }}"
+    - "{{ ha_pairs | map(attribute='node_specs') | flatten}}"
+  when:
+    - "('nfs' in item.0.allowed_protocols)"
+  tags:
+    - ontap_vlan_interface
+
+# Get the NFS list for all tenant SVMs
+- name: Get the NFS vlan list
+  ansible.builtin.set_fact:
+    nfs_vlan_list: "{{ nfs_vlan_list | default([]) + [item.1['NFS']]}}"
+  with_nested:
+    - "{{ tenants }}"
+    - "{{ tenants | map(attribute='broadcast_domains') | flatten }}"
+  when: "('nfs' in item.0.allowed_protocols)"
+  tags:
+    - ontap_vlan_interface
+
+# Add the NFS vlans to the correponding broadcast domain
+- name: Adding NFS vlan to the corresponding broadcast domain
+  netapp.ontap.na_ontap_ports:
+    state: present
+    names: "{{item.0.node_name}}:{{ifgrp_name}}-{{item.2.vlanid}}"
+    resource_type: "broadcast_domain"
+    resource_name: "{{item.2.name}}"
+    ipspace: "{{item.1.name}}"
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_nested:
+    - "{{ ha_pairs | map(attribute='node_specs') | flatten }}"
+    - "{{ tenants }}"
+    - "{{ nfs_vlan_list }}"
+  when:
+    - "('nfs' in item.1.allowed_protocols)"
+    - item.2 in (item.1.broadcast_domains | flatten | map(attribute='NFS') | flatten)
+  tags:
+    - ontap_vlan_interface
+
+# Create iSCSI vlan interface
+- name: Create iscsi vlan interface in the ipspace
+  netapp.ontap.na_ontap_net_vlan:
+    state: present
+    parent_interface: "{{ifgrp_name}}"
+    vlanid: "{{item.2.vlanid}}"
+    node: "{{item.0.node_name }}"
+    ipspace: "{{item.1.name}}"
+    broadcast_domain: "{{item.2.name }}"
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_nested:
+    - "{{ ha_pairs | map(attribute='node_specs') | flatten}}"
+    - "{{ tenants }}"
+    - "{{ tenants | map(attribute='broadcast_domains') | flatten | map(attribute='ISCSI')| flatten }}"
+  when:
+    - ('iscsi' in item.1.allowed_protocols) and item.2.name is defined and item.2.name != None
+    - item.2 in (item.1.broadcast_domains | flatten | map(attribute='ISCSI') | flatten)
+  tags:
+    - ontap_vlan_interface
+
+# Create NVMe/TCP vlans
+- name: Create the NVMe/TCP vlan interfaces in the ipspace
+  netapp.ontap.na_ontap_net_vlan:
+    state: present
+    parent_interface: "{{ifgrp_name}}"
+    vlanid: "{{item.2.vlanid}}"
+    node: "{{item.0.node_name }}"
+    ipspace: "{{item.1.name}}"
+    broadcast_domain: "{{item.2.name }}"
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_nested:
+    - "{{ ha_pairs | map(attribute='node_specs') | flatten}}"
+    - "{{ tenants }}"
+    - "{{ tenants | map(attribute='broadcast_domains') | flatten | map(attribute='NVME-TCP')| flatten }}"
+  when:
+    - ('nvme' in item.1.allowed_protocols) and item.2.name is defined and item.2.name != None
+    - item.2 in (item.1.broadcast_domains | flatten | map(attribute='NVME-TCP') | flatten)
+  tags:
+    - ontap_vlan_interface_nvme
+
+# Get the iscsi vlan list for all tenant SVMs
+- name: Get the ISCSI vlan list
+  ansible.builtin.set_fact:
+    iscsi_vlan_list: "{{ iscsi_vlan_list | default([]) + [item.1 | combine( {'ipspace': item.0.name })] }}"
+  with_nested:
+    - "{{ tenants }}"
+    - "{{ tenants | map(attribute='broadcast_domains') | flatten |map(attribute='ISCSI') | flatten }}"
+  when:
+    - item.1.name is defined and item.1.name != None
+    - item.1 in (item.0.broadcast_domains | flatten | map(attribute='ISCSI') | flatten)
+  tags:
+    - ontap_vlan_interface_iscsi
+
+# Get the ISCSI vlan list Debug value       
+- name: for debugging, see the iscsi vlan list
+  ansible.builtin.debug: var=iscsi_vlan_list
+  tags:
+    - ontap_vlan_interface_iscsi
+
+# Add the iSCSI vlans to the correponding broadcast domains
+- name: Adding iSCSI-A, iSCSI-B vlans to the corresponding broadcast domains
+  netapp.ontap.na_ontap_ports:
+    state: present
+    names: "{{item.0.node_name}}:{{ifgrp_name}}-{{item.2.vlanid}}"
+    resource_type: "broadcast_domain"
+    resource_name: "{{item.2.name}}"
+    ipspace: "{{item.1.name}}"
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_nested:
+    - "{{ ha_pairs | map(attribute='node_specs') | flatten}}"
+    - "{{ tenants }}"
+    - "{{ iscsi_vlan_list}}"
+  when:
+    - ('iscsi' in item.1.allowed_protocols) and (item.1.broadcast_domains | flatten | map(attribute='ISCSI') | flatten)[0].name != none
+    - item.2.ipspace is defined and item.2.ipspace != None and item.2.ipspace == item.1.name
+  tags:
+    - ontap_vlan_interface_iscsi
+
+# Get the nvme/tcpiscsi vlan list for all tenant SVMs
+- name: Get the NVMe-TCP vlan list
+  ansible.builtin.set_fact:
+    nvmetcp_vlan_list: "{{ nvmetcp_vlan_list | default([]) + [item.1 | combine( {'ipspace': item.0.name })] }}"
+  with_nested:
+    - "{{ tenants }}"
+    - "{{ tenants | map(attribute='broadcast_domains') | flatten| map(attribute='NVME-TCP') | flatten }}" 
+  when:
+    - item.1.name is defined and item.1.name != None
+    - item.1 in (item.0.broadcast_domains | flatten | map(attribute='NVME-TCP') | flatten)
+  tags:
+    - ontap_vlan_interface_nvme
+
+# Get the NVMe/TCP vlan list Debug value
+- name: for debugging, see the NVMe/TCP vlan list
+  ansible.builtin.debug: var=nvmetcp_vlan_list
+  tags:
+    - ontap_vlan_interface_nvme
+
+# Add the NVMe/TCP vlans to the correponding broadcast domains
+- name: Adding NVMe-TCP-A, NVMe-TCP-B vlans to the corresponding broadcast domains
+  netapp.ontap.na_ontap_ports:
+    state: present
+    names: "{{item.0.node_name}}:{{ifgrp_name}}-{{item.2.vlanid}}"
+    resource_type: "broadcast_domain"
+    resource_name: "{{item.2.name}}"
+    ipspace: "{{item.1.name}}"
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_nested:
+    - "{{ ha_pairs | map(attribute='node_specs') | flatten }}"
+    - "{{ tenants }}"
+    - "{{nvmetcp_vlan_list}}"
+  when:
+    - ('nvme' in item.1.allowed_protocols) and (item.1.broadcast_domains | flatten | map(attribute='NVME-TCP') | flatten)[0].name != none
+    - item.2.ipspace is defined and item.2.ipspace != None and item.2.ipspace == item.1.name
+  tags:
+    - ontap_vlan_interface_nvme

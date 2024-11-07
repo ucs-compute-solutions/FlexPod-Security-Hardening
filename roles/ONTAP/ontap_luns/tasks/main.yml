@@ -1,0 +1,137 @@
+---
+# Create the boot LUNs for Servers for iSCSI configuration
+- name: Create the boot LUNs for Servers for iSCSI config
+  netapp.ontap.na_ontap_lun:
+    state: present
+    vserver: "{{item.0.svm_name}}"
+    name: "{{item.1.hostname}}-ISCSI"
+    size: "{{item.0.boot_luns_iscsi.size}}"
+    flexvol_name: "{{item.0.boot_luns_iscsi.residing_vol}}"
+    ostype: "{{item.0.os_type}}"
+    space_reserve: false
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_nested:
+    - "{{tenants}}"
+    - "{{iscsi_esxi_hosts}}"
+  when: "('iscsi' in item.0.allowed_protocols)"
+  tags:
+    - ontap_lun_create_iscsi
+
+# Create the boot LUNs for Servers for FCP configuration
+- name: Create the boot LUNs for Servers for FC config
+  netapp.ontap.na_ontap_lun:
+    state: present
+    vserver: "{{item.0.svm_name}}"
+    name: "{{item.1.hostname}}-FCP"
+    size: "{{item.0.boot_luns_fcp.size}}"
+    flexvol_name: "{{item.0.boot_luns_fcp.residing_vol}}"
+    ostype: "{{item.0.os_type}}"
+    space_reserve: false
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_nested:
+    - "{{tenants}}"
+    - "{{fc_esxi_hosts}}"
+  when: "('fcp' in item.0.allowed_protocols)"
+  tags:
+    - ontap_lun_create_fcp
+
+# Create igroups for iSCSI
+- name: Create the igroups for iSCSI
+  netapp.ontap.na_ontap_igroup:
+    state: present
+    vserver: "{{item.0.svm_name}}"
+    initiator: "{{item.1.iscsi_iqn}}"
+    ostype: "{{item.0.os_type}}"
+    initiator_group_type: iscsi
+    name: "{{item.1.hostname}}-ISCSI"
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_nested:
+    - "{{tenants}}"
+    - "{{iscsi_esxi_hosts}}"
+  when: "('iscsi' in item.0.allowed_protocols)"
+  tags:
+    - ontap_iscsi_igroup_create
+
+# Getting the FCP igroup names with their corresponding WWPNs
+- name: Get the FCP igroup names with their corresponding WWPNs
+  ansible.builtin.set_fact:
+    fcp_igroup_wwpn_list: "{{ fcp_igroup_wwpn_list|default([]) + [ {item.0.svm_name: {'igroup_name': item.1.hostname, 'wwpns': [item.1.fcp_a_wwpn,item.1.fcp_b_wwpn]}} ] }}"
+  with_nested:
+    - "{{tenants}}"
+    - "{{fc_esxi_hosts}}"
+  when:
+    - "('fcp' in item.0.allowed_protocols)"
+  tags:
+    - ontap_fcp_igroup_create
+
+# Create igroups for FCP
+# For FCP, we need to add multiple WWPNs from the single host to an igroup
+- name: Create the igroups for FCP
+  netapp.ontap.na_ontap_igroup:
+    state: present
+    vserver: "{{item.0.svm_name}}"
+    initiators: "{{item.1[item.0.svm_name].wwpns}}"
+    ostype: "{{item.0.os_type}}"
+    initiator_group_type: fcp
+    name: "{{item.1[item.0.svm_name].igroup_name}}-FCP"
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_nested:
+    - "{{ tenants }}"
+    - fcp_igroup_wwpn_list
+  when: "('fcp' in item.0.allowed_protocols)"
+  tags:
+    - ontap_fcp_igroup_create
+
+# Map the LUNs to iSCSI igroups
+- name: Mapping LUN to iSCSI igroup
+  netapp.ontap.na_ontap_lun_map:
+    state: present
+    vserver: "{{item.0.svm_name}}"
+    initiator_group_name: "{{item.1.hostname}}-ISCSI"
+    path: /vol/{{item.0.boot_luns_iscsi.residing_vol}}/{{item.1.hostname}}-ISCSI
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_nested:
+    - "{{ tenants }}"
+    - "{{iscsi_esxi_hosts}}"
+  when: "('iscsi' in item.0.allowed_protocols)"
+  tags:
+    - ontap_map_lun_to_igroup_iscsi
+
+# Map the LUNs to FCP igroups
+- name: Mapping LUN to FCP igroup
+  netapp.ontap.na_ontap_lun_map:
+    state: present
+    vserver: "{{item.0.svm_name}}"
+    initiator_group_name: "{{item.1.hostname}}-FCP"
+    path: /vol/{{item.0.boot_luns_iscsi.residing_vol}}/{{item.1.hostname}}-FCP
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_nested:
+    - "{{ tenants }}"
+    - "{{fc_esxi_hosts}}"
+  when: "('fcp' in item.0.allowed_protocols)"
+  tags:
+    - ontap_map_lun_to_igroup_fcp

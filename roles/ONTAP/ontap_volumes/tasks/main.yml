@@ -1,0 +1,265 @@
+---
+# Create a new rule for the infrastructure NFS subnet in the default export policy
+- name: Create the export policy rules
+  netapp.ontap.na_ontap_export_policy_rule:
+    state: present
+    vserver: "{{item.svm_name}}"
+    policy_name: default
+    client_match: "{{item.client_match}}"
+    protocol: "{{item.data_protocol}}"
+    ro_rule: sys
+    rw_rule: sys
+    rule_index: 1
+    super_user_security: sys
+    allow_suid: True
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_items:
+    - "{{tenants}}"
+  tags:
+    - ontap_export_policy_rule
+
+# Create a new Snapshot policy to be used for data volumes.
+- name: Create a new Snapshot policy for data volumes.
+  netapp.ontap.na_ontap_snapshot_policy:
+    state: present
+    enabled: true
+    count: "{{item.1.count}}"
+    name: "{{item.1.name}}"
+    prefix: "{{item.1.schedules}}"
+    schedule: "{{item.1.schedules}}"
+    vserver: "{{item.0.svm_name}}"
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_subelements:
+    - "{{tenants}}"
+    - snapshot_policy_specs
+  tags:
+    - ontap_snapshot_policy
+
+# Create FlexVols for datastores
+- name: Create FlexVols for datastores
+  netapp.ontap.na_ontap_volume:
+    state: present
+    vserver: "{{item.0.svm_name}}"
+    policy: default
+    name: "{{item.1.name}}"
+    aggregate_name: "{{item.1.residing_aggr}}"
+    size: "{{item.1.size}}"
+    is_online: True
+    space_guarantee: none
+    snapshot_policy: "{{ item.1.snapshot_policy }}"
+    percent_snapshot_space: 0
+    junction_path: /{{item.1.name}}
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_subelements:
+    - "{{tenants}}"
+    - data_volumes
+  tags:
+    - ontap_flexvol_datastore
+
+# Create FlexVol for storing Tenant SVM audit log config
+- name: Create FlexVol for Tenant SVM audit log configuration
+  netapp.ontap.na_ontap_volume:
+    state: present
+    vserver: "{{ item.svm_name }}"
+    policy: default
+    name: "{{item.audit_log_volume_specs.name}}"
+    aggregate_name: "{{item.audit_log_volume_specs.residing_aggr}}"
+    size: "{{item.audit_log_volume_specs.size}}"
+    is_online: True
+    space_guarantee: none
+    percent_snapshot_space: 0
+    junction_path: /{{item.audit_log_volume_specs.name}}
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_items:
+    - "{{ tenants }}"
+  tags:
+    - ontap_svm_audit_log_vol
+
+# Create swap volumes
+- name: Create swap volumes
+  netapp.ontap.na_ontap_volume:
+    state: present
+    vserver: "{{item.0.svm_name}}"
+    policy: default
+    name: "{{item.1.name}}"
+    aggregate_name: "{{item.1.residing_aggr}}"
+    size: "{{item.1.size}}"
+    is_online: True
+    space_guarantee: none
+    percent_snapshot_space: 0
+    snapshot_policy: none
+    junction_path: /{{item.1.name}}
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_subelements:
+    - "{{tenants}}"
+    - swap_volumes
+  tags:
+    - ontap_swap_volumes
+
+# Disable the volume efficiency on swap volumes
+- name: Disable the volume efficiency on swap volumes
+  netapp.ontap.na_ontap_volume_efficiency:
+    state: absent
+    vserver: "{{item.0.svm_name}}"
+    path: "/vol/{{item.1.name}}"
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_subelements:
+    - "{{tenants}}"
+    - swap_volumes
+  tags:
+    - ontap_disable_vol_efficiency
+
+# Create NVMe datastores
+- name: Create NVMe datastores
+  netapp.ontap.na_ontap_volume:
+    state: present
+    vserver: "{{item.0.svm_name}}"
+    policy: default
+    name: "{{item.1.name}}"
+    aggregate_name: "{{item.1.residing_aggr}}"
+    size: "{{item.1.size}}"
+    is_online: True
+    space_guarantee: none
+    percent_snapshot_space: 0
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_subelements:
+    - "{{tenants}}"
+    - nvme_datastores
+  when: "'nvme' in item.0.allowed_protocols"
+  tags:
+    - ontap_nvme_datastores
+
+# Create a FlexVol for the boot LUNs of servers
+- name: Create a FlexVol for the boot LUNs of servers
+  netapp.ontap.na_ontap_volume:
+    state: present
+    vserver: "{{item.0.svm_name}}"
+    policy: default
+    name: "{{item.1.name}}"
+    aggregate_name: "{{item.1.residing_aggr}}"
+    size: "{{item.1.size}}"
+    space_guarantee: none
+    percent_snapshot_space: 0
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_subelements:
+    - "{{tenants}}"
+    - boot_volumes
+  tags:
+    - ontap_flexvol_boot_luns
+
+# Create vCLS datastores to be used by the vSphere environment to host vSphere Cluster Services (vCLS) VMs
+- name: Create vCLS datastores
+  netapp.ontap.na_ontap_volume:
+    state: present
+    vserver: "{{item.0.svm_name}}"
+    policy: default
+    name: "{{item.1.name}}"
+    aggregate_name: "{{item.1.residing_aggr}}"
+    size: "{{item.1.size}}"
+    is_online: True
+    space_guarantee: none
+    percent_snapshot_space: 0
+    snapshot_policy: none
+    junction_path: /{{item.1.name}}
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_subelements:
+    - "{{tenants}}"
+    - vcls_datastores
+  tags:
+    - ontap_vcls_datastores
+
+# Get the Tenant SVM root volume information
+- name: Get the Tenant SVM root volume information
+  netapp.ontap.na_ontap_rest_info:
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+    use_rest: always
+    use_python_keys: true
+    gather_subset:
+      - volume_info
+    fields:
+      - "name"
+      - "svm.name"
+    parameters:
+      name: "*root"
+  register: svm_rootvol_dict
+  tags:
+    - ontap_update_ls_mirrors
+
+# Create the list variable for dict of tenant SVM and root vol
+- name: Create the dict for tenant svm and its root-vol
+  ansible.builtin.debug: var=svm_rootvol_dict
+  tags:
+    - ontap_update_ls_mirrors
+
+# Create the list variable for dict of tenant SVM and root vol
+- name: Create the dict for tenant svm and its root-vol
+  ansible.builtin.set_fact:
+    svm_root_vol: "{{ svm_root_vol | default([]) + [{'name': item.0.svm_name, 'root_vol':item.1.name}] }}"
+  with_nested:
+    - "{{ tenants }}"
+    - "{{ (svm_rootvol_dict.ontap_info.storage_volumes.records) | list }}"
+  when: item.0.svm_name == item.1.svm.name
+  tags:
+    - ontap_update_ls_mirrors
+
+# Create the list variable for dict of tenant SVM and root vol
+- name: Create the dict for tenant svm and its root-vol
+  ansible.builtin.debug: var=svm_root_vol
+  tags:
+    - ontap_update_ls_mirrors
+
+      # Update set of load-sharing mirrors
+- name: Update load-sharing mirrors
+  netapp.ontap.na_ontap_rest_cli:
+    command: 'snapmirror/update-ls-set'
+    verb: 'POST'
+    body: {'source-path': '{{item.name}}:{{item.root_vol}}'}
+    hostname: "{{inventory_hostname}}"
+    username: "{{username}}"
+    password: "{{password}}"
+    https: true
+    validate_certs: false
+  with_items:
+    - "{{svm_root_vol}}"
+  tags:
+    - ontap_update_ls_mirrors
