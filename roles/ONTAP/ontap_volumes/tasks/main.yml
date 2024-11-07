@@ -225,8 +225,8 @@
   tags:
     - ontap_update_ls_mirrors
 
-# Create the list variable for dict of tenant SVM and root vol
-- name: Create the dict for tenant svm and its root-vol
+# Print the tenant svm and its root-vol dict from REST output
+- name: Print the tenant svm and its root-vol dict from rest output
   ansible.builtin.debug: var=svm_rootvol_dict
   tags:
     - ontap_update_ls_mirrors
@@ -242,13 +242,13 @@
   tags:
     - ontap_update_ls_mirrors
 
-# Create the list variable for dict of tenant SVM and root vol
-- name: Create the dict for tenant svm and its root-vol
+# Print the tenant svm and its root-vol dict
+- name: Print the tenant svm and its root-vol dict
   ansible.builtin.debug: var=svm_root_vol
   tags:
     - ontap_update_ls_mirrors
 
-      # Update set of load-sharing mirrors
+# Update set of load-sharing mirrors
 - name: Update load-sharing mirrors
   netapp.ontap.na_ontap_rest_cli:
     command: 'snapmirror/update-ls-set'
