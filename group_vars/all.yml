@@ -31,7 +31,7 @@ ib_mgmt_ntp_servers:   # Assigned IB-MGMT NTP Addresses to be used by ESXi hosts
 # Note: The Nexus and MDS scripts assume exactly 2 DNS servers.
 dns_servers:
   - ip_address: "10.102.1.151"
-  - ip_address: "10.1.102.1521"
+  - ip_address: "10.102.1.152"
 
 # DNS Domain Name
 dns_domain_name: "flexpodb4.cisco.com"
