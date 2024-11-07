@@ -28,7 +28,7 @@ Because a number of manual tasks need to be executed between running the Ansible
 In this version of the FlexPod setup, FC boot with FC-NVMe and NFS is configured by default in the variable files, but iSCSI boot and NVMe-TCP with NFS can also be used.
 The steps for setting up a FlexPod with FC boot with FC-NVMe and NFS storage protocols are:
 
-1.  Create a directory and clone the repository from Github with "git clone https://github.com/ucs-compute-solutions/FlexPod-IMM-VMware.git".
+1.  Create a directory and clone the repository from Github with "git clone https://github.com/ucs-compute-solutions/FlexPod-Security-Hardening.git".
 2.  Fill in the variable files according to the CVD.
 3.  Follow the manual steps in the CVD to set up the Nexus switches on the network and ssh into each switch.
 4.  Execute the Nexus playbook with "ansible-playbook ./Setup_Nexus.yml -i inventory" to setup the Nexus switches.
