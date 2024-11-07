@@ -14,7 +14,7 @@ The ONTAP deployment automation is based on the following roles:
 	ontap_nvme
 	ontap_finalize_setup
 	esxi_datastores
-        ontap_security_hardening
+	ontap_security_hardening
 
 These roles are developed as per the best practices prescribed in the Cisco Validated Design (CVD) and and NetApp Technical Report(TR) "[FlexPod Datacenter Zero Trust Framework and FlexPod Security Hardening]" (https://www.cisco.com/c/en/us/td/docs/unified_computing/ucs/UCS_CVDs/flexpod_zero_trust.html and https://www.netapp.com/media/99202-tr_4984_flexpod_security_hardening.pdf)
 
