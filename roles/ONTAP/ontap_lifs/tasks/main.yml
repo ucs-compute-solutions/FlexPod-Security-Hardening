@@ -131,7 +131,7 @@
     state: present
     vserver: "{{item.0.svm_name}}"
     protocols: fcp
-    home_node: "{{item.2.node_name}}"
+    home_node: "{{item.1.home_node}}"
     home_port: "{{item.1.home_port}}"
     interface_name: "{{item.1.name}}"
     admin_status: up
@@ -142,8 +142,7 @@
     validate_certs: false
   with_nested:
     - "{{ tenants }}"
-    - "{{ ha_pairs | map(attribute='node_specs') | flatten }}"
-    - "{{ tenants | map(attribute='fcp_lifs') | flatten}})"
+    - "{{ tenants | map(attribute='fcp_lifs') | flatten}}"
   when: "('fcp' in item.0.allowed_protocols)"
   tags:
     - ontap_fcp_lifs
@@ -152,9 +151,9 @@
 - name: Create NVMe FC LIF(s) on Nodes
   netapp.ontap.na_ontap_interface:
     state: present
-    vserver: "{{item.2.svm_name}}"
+    vserver: "{{item.0.svm_name}}"
     protocols: fc-nvme
-    home_node: "{{item.0.node_name}}"
+    home_node: "{{item.1.home_node}}"
     home_port: "{{item.1.home_port}}"
     interface_name: "{{item.1.name}}"
     admin_status: up
@@ -165,8 +164,7 @@
     validate_certs: false
   with_nested:
     - "{{ tenants }}"
-    - "{{ ha_pairs | map(attribute='node_specs') | flatten }}"
-    - "{{ tenants | map(attribute='fc-nvme_lifs') | flatten}})"
+    - "{{ tenants | map(attribute='fc-nvme_lifs') | flatten}}"
   when: "('fcp' in item.0.allowed_protocols) and ('nvme' in item.0.allowed_protocols)"
   tags:
     - ontap_fc_nvme_lifs
@@ -181,7 +179,7 @@
 # Getting the NVME/TCP storage VLANs list
 - name: Get the NVME/TCP storage VLANs list
   ansible.builtin.set_fact:
-    nvmetcp_vlans_list: "{{ nvmetcp_vlans_list|default([]) + [ {'vserver': item.0.svm_name, 'vlan_id': item.1.vlanid, 'vlan_fabric': item.1.fabric, 'ipspace': item.0.name}] }}"
+    nvmetcp_vlans_list: "{{ nvmetcp_vlans_list + [ {'vserver': item.0.svm_name, 'vlan_id': item.1.vlanid, 'vlan_fabric': item.1.fabric, 'ipspace': item.0.name}] }}"
   with_nested:
     - "{{ tenants }}"
     - "{{ tenants | map(attribute='broadcast_domains') | flatten | map(attribute='NVME-TCP') | flatten}}"
